@@ -8,6 +8,7 @@ import {
   getLocalStorageData,
   slackBootData,
   uploadEmoji,
+  uploadAlias,
   workSpaceName,
 } from './slack';
 import { formatDate, retry, downloadBlob, sleep } from './util';
@@ -143,7 +144,7 @@ const initDropzone = async (): Promise<[Dropzone, HTMLDivElement]> => {
     url: 'mock',
     autoProcessQueue: false,
     previewTemplate: (await element.createDropzonePreviewTemplate()).outerHTML,
-    acceptedFiles: 'image/*',
+    acceptedFiles: 'image/*,application/json',
     dictDefaultMessage: chrome.i18n.getMessage('dropzone_dict'),
   });
 
@@ -155,6 +156,34 @@ const initDropzone = async (): Promise<[Dropzone, HTMLDivElement]> => {
     const imageWrapper = file.previewElement.querySelector('.cem-dz-image')!;
     const condition = (e: AxiosError) => e.response?.status === 429;
 
+    // エイリアス登録処理
+    // プレビュー表示は非対応
+    if (file.name === '_alias.json') {
+      const aliasesJson = JSON.parse(await file.text());
+      const aliases: [string, string][] = Object.entries(aliasesJson);
+
+      aliases.forEach(([alias, target]) => {
+        queue.add(async () => {
+          await retry(() => uploadAlias(target, alias), {
+            condition,
+            num: 3,
+            sleep: 3000,
+          })
+            .then((res) => {
+              if (res.data.error) {
+                throw new Error(res.data.error);
+              }
+            })
+            .catch((e) => {
+              if (!(e instanceof Error)) return;
+            });
+        });
+      });
+
+      return;
+    }
+
+    // 絵文字登録処理
     queue.add(async () => {
       // 登録処理(3回まで失敗を許容する)
       await retry(() => uploadEmoji(name, file.name, file), {
